@@ -27,8 +27,8 @@
 <section id="signup" class="section">
 <div class="eyebrow">Teilnahme & Zuständigkeiten</div><h1>Teamverwaltung</h1><p>Trage den RP-Namen und die Rolle ein. Die Liste kann exportiert werden, damit sie für die gemeinsame Planung geteilt werden kann.</p>
 <div class="layout"><div class="card"><h2>📝 Anmeldung</h2><form id="joinForm"><div class="field"><label for="rpName">RP-Name *</label><input id="rpName" maxlength="50" required placeholder="z. B. Viper"></div><div class="field"><label for="role">Rolle *</label><select id="role" required><option value="SWAT-Beamter / eigene POV">SWAT-Beamter / eigene POV</option><option value="Einsatzleitung">Einsatzleitung</option><option value="Teamführer">Teamführer</option><option value="Kamera / Außenaufnahmen">Kamera / Außenaufnahmen</option><option value="Krimineller / Verdächtiger">Krimineller / Verdächtiger</option><option value="Geisel">Geisel</option><option value="Sonstige Rolle">Sonstige Rolle</option></select></div><div class="field"><label for="note">Hinweis (optional)</label><input id="note" maxlength="160" placeholder="z. B. kann Außenaufnahmen machen"></div><button class="btn primary" type="submit">Teilnehmer hinzufügen</button><div id="formMessage" class="message" role="status"></div></form></div>
-<div class="card"><h2>👥 Teilnehmerliste</h2><p class="small">Anmeldungen werden nur auf diesem Gerät gespeichert, sofern keine gemeinsame Datenbank angebunden ist.</p><div id="people"></div><div class="actions"><button class="btn" id="exportPeople">Team exportieren (.json)</button><button class="btn danger" id="clearPeople">Lokale Liste leeren</button></div></div></div>
-<div class="note" style="margin-top:16px">Wichtig: Auf GitHub Pages speichert diese Version Daten nur im jeweiligen Browser. Für eine gemeinsame Live-Liste, die alle Teilnehmer sehen, muss ein Backend wie Supabase eingerichtet werden.</div>
+<div class="card"><h2>👥 Teilnehmerliste</h2><p class="small">Gemeinsame Teilnehmerliste: Anmeldungen werden aus Supabase geladen und regelmäßig aktualisiert.</p><div id="syncStatus" class="note" role="status" style="margin-bottom:12px">Verbindung wird hergestellt …</div><div id="people"></div><div class="actions"><button class="btn" id="exportPeople">Team exportieren (.json)</button></div></div></div>
+<div class="note" style="margin-top:16px">Die gemeinsame Teilnehmerliste wird über Supabase synchronisiert. Jeder kann die Liste ansehen und sich anmelden; Löschen von Anmeldungen ist über diese Website nicht freigegeben.</div>
 </section>
 <section id="script" class="section">
 <div class="eyebrow">Drehbuch & Regie</div><h1>Szenenplan</h1><p>Geplante Ziellänge: 1–2 Minuten. Zeiten sind Zielmarken für den fertigen Schnitt, nicht die reale Dauer der Spielszenen. Szene nach dem Dreh auf „Abgedreht“ setzen.</p>
@@ -58,29 +58,71 @@
 <div class="footer">LSPD · SWAT-Drehplan · Interne Organisation für FiveM. Keine echte Polizeidienststelle. <span style="float:right">Offline-fähige Ein-Datei-Version</span></div>
 </main>
 <script>
+const SUPABASE_URL='https://gsgbqxpxswuemlsyqvod.supabase.co';
+const SUPABASE_KEY='sb_publishable_ivEkZf1rrHIxDZwF6GkxPg_kBf2FLa-';
 const PEOPLE_KEY='swat_dreh_people_v2', TASK_KEY='swat_dreh_tasks_v2', SCENE_KEY='swat_dreh_scenes_v1', SHOT_KEY='swat_dreh_shots_v1', EDIT_KEY='swat_dreh_edit_v1', NOTES_KEY='swat_dreh_notes_v1';
 const defaultTasks=['Teilnehmer und Rollen bestätigen','Geiselstatus klären','Treffpunkt und Startzeit bestätigen','Aufnahmeprogramm und Mikrofon testen','Bildqualität und Audio testen','Speicherplatz für POV-Aufnahmen prüfen','Funktexte und Reihenfolge kurz durchgehen','Fahrzeuge und Ausrüstung bereitstellen'];
 const afterDefaults=['Alle POV-Aufnahmen vollständig vorhanden','Dateien sicher an einem gemeinsamen Ort ablegen','Fehlende Perspektiven identifizieren','Schnitt und Musik synchronisieren','Funkverkehr verständlich abmischen','Titelkarte und fertiges Video exportieren'];
 const shotDefaults=['Beamter 1 – eigene POV / SWAT','Beamter 2 – eigene POV / Einsatzleitung','Beamter 3 – eigene POV / Teamführer','Beamter 4 – eigene POV / SWAT','Beamter 5 – eigene POV / SWAT','Optionale Zusatzkamera – Außenaufnahmen','Mikrofon und Funkton geprüft','Aufnahme vor dem Einsatz gestartet','Datei nach dem Dreh gespeichert'];
 const editDefaults=['Szenen in der geplanten Reihenfolge sortieren','Beste POV-Momente auswählen','Schnitt auf 1–2 Minuten abstimmen','Trailer-Musik und Funkverkehr mischen','Teamaufnahme und Endtitel einfügen','Fertiges Video kontrollieren und exportieren'];
 function read(key,fallback){try{const v=JSON.parse(localStorage.getItem(key));return v===null?fallback:v}catch(e){return fallback}}
-let people=read(PEOPLE_KEY,[]), tasks=read(TASK_KEY,defaultTasks.map((label,i)=>({id:i,label,done:false}))), afterTasks=read('swat_dreh_after_v1',afterDefaults.map((label,i)=>({id:i,label,done:false}))), sceneStates=read(SCENE_KEY,{}), shots=read(SHOT_KEY,shotDefaults.map((label,i)=>({id:i,label,done:false}))), edits=read(EDIT_KEY,editDefaults.map((label,i)=>({id:i,label,done:false})));
+let people=[], tasks=read(TASK_KEY,defaultTasks.map((label,i)=>({id:i,label,done:false}))), afterTasks=read('swat_dreh_after_v1',afterDefaults.map((label,i)=>({id:i,label,done:false}))), sceneStates=read(SCENE_KEY,{}), shots=read(SHOT_KEY,shotDefaults.map((label,i)=>({id:i,label,done:false}))), edits=read(EDIT_KEY,editDefaults.map((label,i)=>({id:i,label,done:false})));
 function save(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(e){}}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function renderPeople(){document.getElementById('count').textContent=people.length;document.getElementById('people').innerHTML=people.length?people.map((p,i)=>`<div class="person"><div><strong>${esc(p.name)}</strong><div class="role">${esc(p.role)}</div>${p.note?`<div class="muted small">${esc(p.note)}</div>`:''}</div><button class="btn danger" data-remove="${i}">Entfernen</button></div>`).join(''):'<div class="empty">Noch keine Anmeldungen auf diesem Gerät.</div>';document.getElementById('homePeople').innerHTML=people.length?people.slice(0,6).map(p=>`<div class="person"><div><strong>${esc(p.name)}</strong><div class="role">${esc(p.role)}</div></div></div>`).join(''):'<div class="empty">Noch keine Anmeldungen.</div>';document.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>{people.splice(Number(b.dataset.remove),1);save(PEOPLE_KEY,people);renderPeople()}))}
+function setSyncStatus(message,ok=false){const el=document.getElementById('syncStatus');if(el){el.textContent=message;el.style.borderLeftColor=ok?'var(--green)':'var(--yellow)'}}
+async function loadPeople(showStatus=true){
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/shared_signups?select=id,rp_name,role,note,created_at&order=created_at.asc`,{
+      headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}
+    });
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const rows=await res.json();
+    people=rows.map(p=>({id:p.id,name:p.rp_name,role:p.role,note:p.note||'',createdAt:p.created_at}));
+    renderPeople();
+    if(showStatus)setSyncStatus(`Verbunden · ${people.length} ${people.length===1?'Person angemeldet':'Personen angemeldet'}. Aktualisiert sich automatisch.`,true);
+  }catch(err){
+    if(showStatus)setSyncStatus('Verbindung fehlgeschlagen. Bitte Project URL, Publishable Key und Tabellen-Richtlinien prüfen.');
+  }
+}
+function renderPeople(){
+  document.getElementById('count').textContent=people.length;
+  document.getElementById('people').innerHTML=people.length?people.map(p=>`<div class="person"><div><strong>${esc(p.name)}</strong><div class="role">${esc(p.role)}</div>${p.note?`<div class="muted small">${esc(p.note)}</div>`:''}</div></div>`).join(''):'<div class="empty">Noch keine Anmeldungen.</div>';
+  document.getElementById('homePeople').innerHTML=people.length?people.slice(0,6).map(p=>`<div class="person"><div><strong>${esc(p.name)}</strong><div class="role">${esc(p.role)}</div></div></div>`).join(''):'<div class="empty">Noch keine Anmeldungen.</div>';
+}
 function renderTasks(list,container,key){document.getElementById(container).innerHTML=list.map((t,i)=>`<label class="task ${t.done?'done':''}"><input type="checkbox" data-list="${key}" data-index="${i}" ${t.done?'checked':''}><span>${esc(t.label)}</span></label>`).join('');document.querySelectorAll(`[data-list="${key}"]`).forEach(c=>c.addEventListener('change',()=>{list[Number(c.dataset.index)].done=c.checked;save(key,list);renderAll()}))}
 function renderAll(){renderPeople();let done=tasks.filter(t=>t.done).length,pct=tasks.length?Math.round(done/tasks.length*100):0;document.getElementById('taskCount').textContent=pct+'%';document.getElementById('progress').textContent=pct+'%';document.getElementById('progressBar').style.width=pct+'%';renderTasks(tasks,'tasks',TASK_KEY);renderTasks(afterTasks,'afterTasks','swat_dreh_after_v1');renderTasks(shots,'shotTasks',SHOT_KEY);renderTasks(edits,'editTasks',EDIT_KEY);let sceneDone=Object.values(sceneStates).filter(Boolean).length;document.getElementById('sceneCount').textContent=sceneDone+'/8';let sp=Math.round(sceneDone/8*100);document.getElementById('sceneProgressLabel').textContent=sp+'%';document.getElementById('sceneProgressBar').style.width=sp+'%';document.querySelectorAll('[data-scene-done]').forEach(c=>{c.checked=!!sceneStates[c.dataset.sceneDone];c.addEventListener('change',()=>{sceneStates[c.dataset.sceneDone]=c.checked;save(SCENE_KEY,sceneStates);renderAll()},{once:true})});}
 function showTab(id){document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active',s.id===id));document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));window.scrollTo({top:0,behavior:'smooth'})}
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));document.querySelectorAll('[data-goto]').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.goto)));
-document.getElementById('joinForm').addEventListener('submit',e=>{e.preventDefault();const name=document.getElementById('rpName').value.trim(),role=document.getElementById('role').value,note=document.getElementById('note').value.trim(),msg=document.getElementById('formMessage');if(!name)return;if(people.some(p=>p.name.toLowerCase()===name.toLowerCase())){msg.className='message show err';msg.textContent='Dieser RP-Name steht bereits in der Liste.';return}people.push({name,role,note,createdAt:new Date().toISOString()});save(PEOPLE_KEY,people);e.target.reset();msg.className='message show ok';msg.textContent='Teilnehmer lokal gespeichert.';renderPeople()});
+document.getElementById('joinForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const name=document.getElementById('rpName').value.trim(),role=document.getElementById('role').value,note=document.getElementById('note').value.trim(),msg=document.getElementById('formMessage');
+  if(!name)return;
+  msg.className='message show';msg.textContent='Anmeldung wird gespeichert …';
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/shared_signups`,{
+      method:'POST',
+      headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Content-Type':'application/json','Prefer':'return=representation'},
+      body:JSON.stringify({rp_name:name,role,note:note||null})
+    });
+    if(!res.ok){let details='';try{details=(await res.json()).message||''}catch(e){};throw new Error(details||`HTTP ${res.status}`)}
+    e.target.reset();
+    msg.className='message show ok';msg.textContent='Anmeldung gespeichert! Sie ist jetzt für alle sichtbar.';
+    await loadPeople();
+  }catch(err){
+    msg.className='message show err';
+    msg.textContent='Anmeldung konnte nicht gespeichert werden. Bitte prüfe die Supabase-Verbindung und Tabellen-Richtlinien.';
+    setSyncStatus('Supabase-Verbindung oder Berechtigungen prüfen.');
+  }
+});
 document.getElementById('exportPeople').addEventListener('click',()=>download('swat-team.json',people));
-document.getElementById('clearPeople').addEventListener('click',()=>{if(confirm('Lokale Teilnehmerliste wirklich leeren?')){people=[];save(PEOPLE_KEY,people);renderPeople()}});
 document.getElementById('exportScenes').addEventListener('click',()=>download('swat-szenenstatus.json',sceneStates));
 function download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 document.getElementById('resetShots').addEventListener('click',()=>{if(confirm('Aufnahme-Check wirklich zurücksetzen?')){shots=shotDefaults.map((label,i)=>({id:i,label,done:false}));save(SHOT_KEY,shots);renderAll()}});
 document.getElementById('saveUploadNotes').addEventListener('click',()=>{save(NOTES_KEY,document.getElementById('uploadNotes').value);document.getElementById('notesSaved').textContent=' Gespeichert';});
 document.getElementById('uploadNotes').value=read(NOTES_KEY,'');
 renderAll();
+loadPeople();
+setInterval(()=>loadPeople(false),10000);
 </script>
 </body>
 </html>
